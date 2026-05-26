@@ -377,6 +377,12 @@ const Workflows: React.FC = () => {
       return;
     }
 
+    const invalidAgentNode = nodes.find(n => n.type === 'agent' && !(n.data.agent_id || n.agent_id));
+    if (invalidAgentNode) {
+      alert(`Error: Agent Node (ID: ${invalidAgentNode.id}) is not configured. Please select an AI agent in the settings panel and try again.`);
+      return;
+    }
+
     const cleanNodes = nodes.map(n => ({
       id: n.id,
       type: n.type,
@@ -652,7 +658,27 @@ const Workflows: React.FC = () => {
                   <label className="text-[10px] text-slate-500 font-bold block mb-1">Select AI Agent*</label>
                   <select
                     value={nodeAgentId}
-                    onChange={(e) => setNodeAgentId(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setNodeAgentId(val);
+                      setNodes((nds) =>
+                        nds.map((node) => {
+                          if (node.id === selectedNode.id) {
+                            const agent = agents.find(a => a.id === val);
+                            return {
+                              ...node,
+                              agent_id: val,
+                              data: {
+                                ...node.data,
+                                agent_id: val,
+                                agentName: agent?.name || 'Unknown Agent'
+                              }
+                            };
+                          }
+                          return node;
+                        })
+                      );
+                    }}
                     className="w-full bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-lg px-2.5 py-2 text-xs outline-none cursor-pointer"
                   >
                     <option value="">-- Choose Agent --</option>
@@ -668,7 +694,25 @@ const Workflows: React.FC = () => {
                   <label className="text-[10px] text-slate-500 font-bold block mb-1">Condition Expression*</label>
                   <select
                     value={nodeCondition}
-                    onChange={(e) => setNodeCondition(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setNodeCondition(val);
+                      setNodes((nds) =>
+                        nds.map((node) => {
+                          if (node.id === selectedNode.id) {
+                            return {
+                              ...node,
+                              condition: val,
+                              data: {
+                                ...node.data,
+                                condition: val
+                              }
+                            };
+                          }
+                          return node;
+                        })
+                      );
+                    }}
                     className="w-full bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-lg px-2.5 py-2 text-xs outline-none cursor-pointer"
                   >
                     <option value="output_contains_error">Output Contains Error</option>
@@ -685,7 +729,25 @@ const Workflows: React.FC = () => {
                   <input
                     type="text"
                     value={nodeQuestion}
-                    onChange={(e) => setNodeQuestion(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setNodeQuestion(val);
+                      setNodes((nds) =>
+                        nds.map((node) => {
+                          if (node.id === selectedNode.id) {
+                            return {
+                              ...node,
+                              question: val,
+                              data: {
+                                ...node.data,
+                                question: val
+                              }
+                            };
+                          }
+                          return node;
+                        })
+                      );
+                    }}
                     placeholder="e.g. Escalate to operator?"
                     className="w-full bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-lg px-2.5 py-2 text-xs outline-none"
                   />
@@ -726,7 +788,25 @@ const Workflows: React.FC = () => {
                 <input
                   type="text"
                   value={edgeWhen}
-                  onChange={(e) => setEdgeWhen(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setEdgeWhen(val);
+                    setEdges((eds) =>
+                      eds.map((edge) => {
+                        if (edge.id === selectedEdge.id) {
+                          return {
+                            ...edge,
+                            label: val || undefined,
+                            labelStyle: { fill: '#a5b4fc', fontWeight: 600, fontSize: '10px' },
+                            labelBgPadding: [6, 4],
+                            labelBgRadius: 4,
+                            labelBgStyle: { fill: '#1e293b', fillOpacity: 0.8 },
+                          };
+                        }
+                        return edge;
+                      })
+                    );
+                  }}
                   placeholder="e.g. true, false, approved, rejected, FAQ"
                   className="w-full bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-lg px-2.5 py-2 text-xs outline-none"
                 />

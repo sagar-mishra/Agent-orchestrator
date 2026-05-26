@@ -12,7 +12,7 @@ services:
       - DATABASE_URL=sqlite:///./data/platform.db
       - LOG_LEVEL=INFO
     volumes:
-      - backend_data:/app/data
+      - ./data:/app/data
     env_file:
       - .env
     restart: always
@@ -30,5 +30,3 @@ services:
       - backend
     restart: always
 
-volumes:
-  backend_data:

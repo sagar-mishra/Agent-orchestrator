@@ -96,17 +96,25 @@ async def handle_telegram_update(update: dict):
         await asyncio.to_thread(_update_err_reply)
         return
 
-    # 4. Trigger the workflow run
+    # 4. Send initial Thinking message
+    thinking_msg_id = await send_telegram_message(chat_id, "Thinking... 🧠")
+
+    # 5. Trigger the workflow run
     try:
         response_text = await execute_workflow(
             workflow.id,
             {"message": text, "chat_id": chat_id}
         )
+        if thinking_msg_id:
+            await edit_telegram_message(chat_id, thinking_msg_id, response_text)
+        else:
+            await send_telegram_message(chat_id, response_text)
     except Exception as e:
-        response_text = f"Error during workflow execution: {str(e)}"
-
-    # 5. Reply to the Telegram user
-    await send_telegram_message(chat_id, response_text)
+        response_text = f"❌ Error during workflow execution: {str(e)}"
+        if thinking_msg_id:
+            await edit_telegram_message(chat_id, thinking_msg_id, response_text)
+        else:
+            await send_telegram_message(chat_id, response_text)
 
     # 6. Save the response in history
     def _update_conv():
@@ -119,11 +127,11 @@ async def handle_telegram_update(update: dict):
                 
     await asyncio.to_thread(_update_conv)
 
-async def send_telegram_message(chat_id: int, text: str):
-    """Utility to post a message payload back to Telegram API."""
+async def send_telegram_message(chat_id: int, text: str) -> int:
+    """Utility to post a message payload back to Telegram API. Returns message_id if successful, else None."""
     if not settings.TELEGRAM_BOT_TOKEN:
         logger.warning("TELEGRAM_BOT_TOKEN not configured. Cannot send reply.")
-        return
+        return None
 
     # Clean Llama 3 template tags if present
     for tag in ["<|start_header_id|>", "<|end_header_id|>", "<|python_tag|>", "<|eot_id|>"]:
@@ -139,14 +147,51 @@ async def send_telegram_message(chat_id: int, text: str):
                 "text": text,
                 "parse_mode": "Markdown"
             })
+            if resp.status_code == 200:
+                return resp.json().get("result", {}).get("message_id")
+                
+            logger.warning(f"Failed to send Markdown message to Telegram (Status: {resp.status_code}). Retrying as plain text...")
+            # Fallback to plain text in case of Markdown parsing errors
+            resp_fallback = await client.post(url, json={
+                "chat_id": chat_id,
+                "text": text
+            })
+            if resp_fallback.status_code == 200:
+                return resp_fallback.json().get("result", {}).get("message_id")
+            else:
+                logger.error(f"Failed to send fallback plain text message: {resp_fallback.status_code} - {resp_fallback.text}")
+    except Exception as e:
+        logger.error(f"Failed to post message to Telegram API: {str(e)}")
+    return None
+
+async def edit_telegram_message(chat_id: int, message_id: int, text: str):
+    """Utility to edit a previously sent message using Telegram API."""
+    if not settings.TELEGRAM_BOT_TOKEN or not message_id:
+        logger.warning("Bot token not configured or message_id is None. Cannot edit message.")
+        return
+
+    # Clean Llama 3 template tags if present
+    for tag in ["<|start_header_id|>", "<|end_header_id|>", "<|python_tag|>", "<|eot_id|>"]:
+        text = text.replace(tag, "")
+    text = text.strip()
+
+    url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/editMessageText"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text,
+                "parse_mode": "Markdown"
+            })
             if resp.status_code != 200:
-                logger.warning(f"Failed to send Markdown message to Telegram (Status: {resp.status_code}). Retrying as plain text...")
-                # Fallback to plain text in case of Markdown parsing errors
+                logger.warning(f"Failed to edit Markdown message to Telegram (Status: {resp.status_code}). Retrying as plain text...")
                 resp_fallback = await client.post(url, json={
                     "chat_id": chat_id,
+                    "message_id": message_id,
                     "text": text
                 })
                 if resp_fallback.status_code != 200:
-                    logger.error(f"Failed to send fallback plain text message: {resp_fallback.status_code} - {resp_fallback.text}")
+                    logger.error(f"Failed to edit fallback plain text message: {resp_fallback.status_code} - {resp_fallback.text}")
     except Exception as e:
-        logger.error(f"Failed to post message to Telegram API: {str(e)}")
+        logger.error(f"Failed to edit message via Telegram API: {str(e)}")

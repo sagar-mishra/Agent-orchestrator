@@ -27,6 +27,67 @@ def make_agent_node(agent_cfg: Agent):
         max_tokens=agent_cfg.max_tokens
     )
     tools = load_tools(agent_cfg.tools_json)
+    
+    if agent_cfg.memory_enabled:
+        from langchain_core.tools import StructuredTool
+        from sqlmodel import Session, select
+        import backend.database as db
+        from backend.models import Memory
+        from datetime import datetime
+        
+        async def save_fact(key: str, value: str) -> str:
+            """Save a key-value fact to the agent's long-term memory. Use this to remember important details (like user preferences, facts, configurations, previous findings) across workflow runs."""
+            def _save():
+                with Session(db.engine) as session:
+                    statement = select(Memory).where(
+                        Memory.agent_id == agent_cfg.id,
+                        Memory.key == f"lt_{key}"
+                    )
+                    mem = session.exec(statement).first()
+                    if not mem:
+                        mem = Memory(
+                            agent_id=agent_cfg.id,
+                            key=f"lt_{key}",
+                            value_json=json.dumps(value),
+                            updated_at=datetime.utcnow()
+                        )
+                    else:
+                        mem.value_json = json.dumps(value)
+                        mem.updated_at = datetime.utcnow()
+                    session.add(mem)
+                    session.commit()
+            await asyncio.to_thread(_save)
+            return f"Successfully saved fact '{key}' = '{value}' to long-term memory."
+
+        async def recall_fact(key: str) -> str:
+            """Recall a key-value fact from the agent's long-term memory."""
+            def _recall():
+                with Session(db.engine) as session:
+                    statement = select(Memory).where(
+                        Memory.agent_id == agent_cfg.id,
+                        Memory.key == f"lt_{key}"
+                    )
+                    mem = session.exec(statement).first()
+                    if not mem:
+                        return f"No fact found for key '{key}' in long-term memory."
+                    try:
+                        return json.loads(mem.value_json)
+                    except Exception:
+                        return mem.value_json
+            val = await asyncio.to_thread(_recall)
+            return f"Fact '{key}': {val}"
+
+        tools.append(StructuredTool.from_function(
+            coroutine=save_fact,
+            name="save_fact",
+            description="Save a key-value fact to the agent's long-term memory. Use this to remember important details (like user preferences, facts, configurations, previous findings) across workflow runs."
+        ))
+        tools.append(StructuredTool.from_function(
+            coroutine=recall_fact,
+            name="recall_fact",
+            description="Recall a key-value fact from the agent's long-term memory."
+        ))
+
     memory = AgentMemory(agent_cfg.id)
 
     async def node_fn(state: WorkflowState):
@@ -39,6 +100,14 @@ def make_agent_node(agent_cfg: Agent):
 
         # Build prompt using state modifier or system prompt
         system_prompt = agent_cfg.system_prompt
+        
+        # Append strict instructions to prevent hallucinated tool calls (e.g. ask_user, human_input)
+        system_prompt += (
+            "\n\nCRITICAL: You are only allowed to invoke the specific tools that are explicitly provided to you in your toolbelt. "
+            "Never attempt to invoke tools that are not in your list (such as 'ask_user', 'human_input', 'ask_human', or any others). "
+            "If you need to ask the user for more information or follow-up questions, ask them directly by writing your response as plain text; "
+            "DO NOT attempt to call any tool or function to communicate with the user."
+        )
         
         # Create React Agent
         agent = create_react_agent(llm, tools, prompt=system_prompt)
